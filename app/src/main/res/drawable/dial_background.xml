@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer Shadow -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#D1D9E6" />
+        </shape>
+    </item>
+    <!-- Inner White Surface -->
+    <item android:bottom="8dp" android:left="8dp" android:right="8dp" android:top="8dp">
+        <shape android:shape="oval">
+            <solid android:color="#FFFFFF" />
+            <gradient
+                android:angle="270"
+                android:endColor="#F0F0F0"
+                android:startColor="#FFFFFF"
+                android:type="linear" />
+        </shape>
+    </item>
+</layer-list>

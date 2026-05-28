@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Basic Colors -->
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="glass_white">#22FFFFFF</color>
+    <color name="glass_stroke">#44FFFFFF</color>
+
+    <!-- Weather Accents / Neon Colors -->
+    <color name="winter_blue">#00E5FF</color>
+    <color name="neon_blue">#00E5FF</color>
+    <color name="autumn_orange">#FF7043</color>
+    <color name="summer_yellow">#FFEE00</color>
+    <color name="neon_yellow">#FFEE00</color>
+    <color name="spring_green">#00FF88</color>
+    <color name="neon_green">#00FF88</color>
+
+    <!-- UI Text/Icons -->
+    <color name="text_grey">#888888</color>
+    <color name="text_light">#E0E0E0</color>
+    <color name="dark_grey">#1A1A1A</color>
+    <color name="light_grey">#333333</color>
+
+    <!-- Legacy/Fallback -->
+    <color name="accent_orange">#FF7043</color>
+    <color name="status_green">#43A047</color>
+    <color name="bg_color">#F5F7FA</color>
+
+    <!-- Base backgrounds -->
+    <color name="bg_deep">#080808</color>
+    <color name="bg_card">#161616</color>
+    <color name="bg_card_inner">#101010</color>
+
+    <!-- Borders -->
+    <color name="border_card">#1E1E1E</color>
+    <color name="border_pill">#252525</color>
+
+    <!-- Accent / neon -->
+    <color name="accent_cyan">#00B8CC</color>
+    <color name="accent_teal">#00CCB0</color>
+    <color name="accent_green">#00E5A0</color>
+    <color name="accent_cooling_bg">#003D30</color>
+    <color name="accent_cooling_border">#005544</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#444444</color>
+    <color name="text_dim">#555555</color>
+
+    <!-- Progress backgrounds -->
+    <color name="progress_bg">#252525</color>
+
+    <!-- Gauge arc colors -->
+    <color name="gauge_start">#1A9E6B</color>
+    <color name="gauge_mid1">#4EC27A</color>
+    <color name="gauge_mid2">#A8D44A</color>
+    <color name="gauge_end">#F0C000</color>
+</resources>

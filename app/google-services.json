@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "251372079184",
+    "project_id": "smartventapp",
+    "storage_bucket": "smartventapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:251372079184:android:92263e300c4ada4748e955",
+        "android_client_info": {
+          "package_name": "com.example.smartventapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDX2--cbOdynRhTGCwbCTqElR0XbSTO0Rk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
