@@ -40,7 +40,7 @@ public class MainActivity extends AppCompatActivity {
     private WeatherAnimationView weatherAnim;
     private SwitchCompat fanSwitch;
 
-    private static final String ARDUINO_BT_NAME = "ESP32S3_Config_Node";
+    private static final String ESP32_BT_NAME = "ESP32S3_Config_Node";
 
     private ActivityResultLauncher<String[]> btPermissionLauncher;
 
@@ -121,7 +121,7 @@ public class MainActivity extends AppCompatActivity {
 
         BluetoothFanController.connect(
                 this,
-                ARDUINO_BT_NAME,
+                ESP32_BT_NAME,
                 name -> runOnUiThread(() -> {
                     setBtStatus("● " + name, 0xFF00FF88);
                     Toast.makeText(this, "Connected to " + name,
@@ -193,7 +193,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void setFan(boolean on) {
         if (!BluetoothFanController.isConnected()) {
-            Toast.makeText(this, "Not connected to Arduino", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Not connected to ESP-32", Toast.LENGTH_SHORT).show();
             if (fanSwitch != null) {
                 fanSwitch.setOnCheckedChangeListener(null);
                 fanSwitch.setChecked(fanIsOn);
@@ -242,7 +242,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void startTimer() {
         if (!BluetoothFanController.isConnected()) {
-            Toast.makeText(this, "Connect to Arduino first", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Connect to ESP-32 first", Toast.LENGTH_SHORT).show();
             return;
         }
         setFan(true);
