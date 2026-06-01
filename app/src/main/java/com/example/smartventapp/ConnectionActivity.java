@@ -49,8 +49,6 @@ public class ConnectionActivity extends AppCompatActivity {
 
     private ActivityResultLauncher<String[]> permLauncher;
 
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -95,8 +93,6 @@ public class ConnectionActivity extends AppCompatActivity {
         stopBleScan();
     }
 
-    // ── Bind views ────────────────────────────────────────────────────────────
-
     private void bindViews() {
         tvBtStatus   = findViewById(R.id.tvBtStatus);
         tvBtSub      = findViewById(R.id.tvBtSub);
@@ -115,8 +111,6 @@ public class ConnectionActivity extends AppCompatActivity {
         if (btnScan != null)
             btnScan.setOnClickListener(v -> requestPermAndScan());
     }
-
-    // ── Status UI ─────────────────────────────────────────────────────────────
 
     private void updateStatusUI(String deviceName, String errorMsg) {
         if (tvBtStatus == null) return;
@@ -139,8 +133,6 @@ public class ConnectionActivity extends AppCompatActivity {
             if (tvBtLastCmd  != null) tvBtLastCmd.setText("—");
         }
     }
-
-    // ── Connect / disconnect ──────────────────────────────────────────────────
 
     private void toggleConnection() {
         if (btConnected) {
@@ -165,7 +157,6 @@ public class ConnectionActivity extends AppCompatActivity {
         BluetoothFanController.connect(
                 this,
                 deviceName,
-                // onConnected — Consumer<String>
                 name -> {
                     btConnected   = true;
                     connectedName = name;
@@ -177,13 +168,11 @@ public class ConnectionActivity extends AppCompatActivity {
                         highlightConnectedDevice(name);
                     });
                 },
-                // onDisconnected — Runnable
                 () -> {
                     btConnected   = false;
                     connectedName = "";
                     runOnUiThread(() -> updateStatusUI(null, null));
                 },
-                // onError — Consumer<String>
                 msg -> {
                     btConnected = false;
                     runOnUiThread(() -> updateStatusUI(null, msg));
@@ -191,21 +180,18 @@ public class ConnectionActivity extends AppCompatActivity {
         );
 
         BluetoothFanController.setDataCallback(
-                // onRawLine — Consumer<String>
                 line -> runOnUiThread(() -> {
                     if (tvBtLastCmd != null) tvBtLastCmd.setText("← " + line);
                 }),
-                // onSensorData — SensorListener (ignored here)
-                (t, h, g1, g2) -> { },
-                // onFanStatus — Consumer<Boolean>
+                jsonString -> {
+                    // Ignore JSON sensor data in this activity
+                },
                 isOn -> runOnUiThread(() -> {
                     if (tvBtLastCmd != null)
                         tvBtLastCmd.setText("Fan " + (isOn ? "ON" : "OFF"));
                 })
         );
     }
-
-    // ── BLE scan ──────────────────────────────────────────────────────────────
 
     private void requestPermAndScan() {
         if (!hasPermission()) {
@@ -278,8 +264,6 @@ public class ConnectionActivity extends AppCompatActivity {
         }
     };
 
-    // ── Device list ───────────────────────────────────────────────────────────
-
     private void addDeviceRow(String name) {
         if (scanList == null) return;
 
@@ -342,8 +326,6 @@ public class ConnectionActivity extends AppCompatActivity {
             }
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private boolean hasPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
