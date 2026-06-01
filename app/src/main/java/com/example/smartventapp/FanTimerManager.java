@@ -2,52 +2,28 @@ package com.example.smartventapp;
 
 import android.content.Context;
 import android.os.CountDownTimer;
-import com.google.firebase.database.FirebaseDatabase;
+
+import java.util.function.Consumer;
 
 /**
  * FanTimerManager
  *
- * Manages a countdown timer that automatically turns the fan OFF
- * and sends a notification when the time runs out.
+ * Uses standard Java functional interfaces — no custom callback classes needed.
  *
- * Usage in MainActivity:
- *
- *   // Start a 30-minute timer
- *   FanTimerManager.start(context, 30, new FanTimerManager.TimerCallback() {
- *       public void onTick(int secondsRemaining) {
- *           tvTimerDisplay.setText(FanTimerManager.formatTime(secondsRemaining));
- *       }
- *       public void onFinished() {
- *           tvTimerDisplay.setText("--:--");
- *           switchFan.setChecked(false);
- *       }
- *   });
- *
- *   // Cancel the timer
- *   FanTimerManager.cancel();
- *
- *   // Check if running
- *   FanTimerManager.isRunning();
+ *   start(context, minutes, onTick, onFinished)
+ *     Consumer<Integer> onTick      — called every second with secondsRemaining
+ *     Runnable          onFinished  — called when countdown reaches zero
  */
 public class FanTimerManager {
 
-    public interface TimerCallback {
-        void onTick(int secondsRemaining);
-        void onFinished();
-    }
-
     private static CountDownTimer activeTimer = null;
-    private static boolean running = false;
-    private static int secondsRemaining = 0;
+    private static boolean        running     = false;
+    private static int            secondsLeft = 0;
 
-    /**
-     * Start the fan timer.
-     * @param context  app context
-     * @param minutes  how many minutes until fan turns OFF
-     * @param callback UI update callbacks
-     */
-    public static void start(Context context, int minutes, TimerCallback callback) {
-        // Cancel any existing timer first
+    public static void start(Context context,
+                             int minutes,
+                             Consumer<Integer> onTick,
+                             Runnable onFinished) {
         cancel();
 
         long totalMs = (long) minutes * 60 * 1000;
@@ -56,43 +32,31 @@ public class FanTimerManager {
         activeTimer = new CountDownTimer(totalMs, 1000) {
             @Override
             public void onTick(long millisUntilFinished) {
-                secondsRemaining = (int)(millisUntilFinished / 1000);
-                if (callback != null) callback.onTick(secondsRemaining);
+                secondsLeft = (int)(millisUntilFinished / 1000);
+                if (onTick != null) onTick.accept(secondsLeft);
             }
-
             @Override
             public void onFinish() {
-                running = false;
-                secondsRemaining = 0;
-
-                // Turn fan OFF in Firebase
-                FirebaseDatabase.getInstance()
-                        .getReference("system/fan_status")
-                        .setValue("OFF");
-
-                // Send notification
+                running     = false;
+                secondsLeft = 0;
                 NotificationHelper.sendTimerNotification(context, minutes);
-
-                if (callback != null) callback.onFinished();
+                if (onFinished != null) onFinished.run();
             }
         }.start();
     }
 
-    /** Cancel the running timer without triggering the finish action. */
     public static void cancel() {
         if (activeTimer != null) {
             activeTimer.cancel();
             activeTimer = null;
         }
-        running = false;
-        secondsRemaining = 0;
+        running     = false;
+        secondsLeft = 0;
     }
 
-    public static boolean isRunning() { return running; }
+    public static boolean isRunning()           { return running; }
+    public static int     getSecondsRemaining() { return secondsLeft; }
 
-    public static int getSecondsRemaining() { return secondsRemaining; }
-
-    /** Format seconds into "MM:SS" string for display. */
     public static String formatTime(int totalSeconds) {
         int m = totalSeconds / 60;
         int s = totalSeconds % 60;

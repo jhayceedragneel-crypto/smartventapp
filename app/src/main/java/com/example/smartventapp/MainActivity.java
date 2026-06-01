@@ -1,65 +1,60 @@
 package com.example.smartventapp;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
 import android.view.View;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-import com.google.firebase.database.DataSnapshot;
-import com.google.firebase.database.DatabaseError;
-import com.google.firebase.database.DatabaseReference;
-import com.google.firebase.database.FirebaseDatabase;
-import com.google.firebase.database.ValueEventListener;
-
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-
+/**
+ * MainActivity — SmartVent (ESP32 BLE edition)
+ *
+ * No custom callback classes. Uses standard Java:
+ *   Consumer<String>  for onConnected, onError, onRawLine
+ *   Consumer<Boolean> for onFanStatus
+ *   Consumer<Integer> for onTick (timer)
+ *   Runnable          for onDisconnected, onFinished
+ *   SensorListener    for onSensorData (4 floats — defined in BluetoothFanController)
+ */
 public class MainActivity extends AppCompatActivity {
 
-    private String currentMode = "Cooling";
-    private String currentView = "Dashboard";
-    private int temperature = 26;
-    private int humidity    = 56;
+    // ── State ─────────────────────────────────────────────────────────────────
     private boolean isFahrenheit = false;
+    private boolean fanIsOn      = false;
+    private int     timerMinutes = 30;
 
-    private double indoorTempC  = 26.0;
-    private int    indoorHum    = 56;
-    private double outdoorTempC = 26.0;
-    private int    outdoorHum   = 56;
+    private float lastTempC    = 0f;
+    private int   lastHumidity = 0;
 
-    // Track fan state to call FanUsageTracker correctly
-    private boolean fanIsOn = false;
-
+    // ── Views ─────────────────────────────────────────────────────────────────
+    private TextView             tvBtStatus;
+    private TextView             tempValue, unitLabel, humidityValue;
+    private TextView             tvGas1, tvGas2, tvAirQualityBadge;
+    private TextView             tvTimerDisplay, tvTimerMinutes, tvTimerStartLabel;
+    private TextView             tvFanStatusLabel, tvOutdoorTimerEcho;
+    private DialTicksView        dialTicks;
     private WeatherAnimationView weatherAnim;
-    private View rootLayout;
-    private TextView tempValue, unitLabel, humidityValue, menuName;
-    private DialTicksView dialTicks;
+    private SwitchCompat         fanSwitch;
 
-    // Medium feature views
-    private TextView tvAirQualityBadge;
-    private TextView tvIndoorTemp, tvIndoorHum, tvOutdoorTemp, tvOutdoorHum;
+    private static final String ARDUINO_BT_NAME = "ESP32S3_Config_Node";
 
-    private int timerMinutes = 30;   // default timer duration
-    private TextView tvTimerDisplay;
-    private TextView tvTimerMinutes;
-    private TextView tvTimerStartLabel;
+    private ActivityResultLauncher<String[]> btPermissionLauncher;
 
-    private Map<String, Integer> menuSettings = new HashMap<>();
-    private DatabaseReference mDatabase;
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,358 +62,294 @@ public class MainActivity extends AppCompatActivity {
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
-        mDatabase = FirebaseDatabase.getInstance().getReference();
+        btPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestMultiplePermissions(),
+                result -> {
+                    boolean granted = Boolean.TRUE.equals(
+                            result.get(Manifest.permission.BLUETOOTH_CONNECT));
+                    if (granted) connectBluetooth();
+                    else Toast.makeText(this,
+                            "Bluetooth permission denied", Toast.LENGTH_SHORT).show();
+                });
 
-        initializeUI();
-        setupListeners();
+        bindViews();
+        setupFanSwitch();
         setupTimer();
-        listenToFanStatus();    // Advanced: fan usage tracking
-        listenToIndoorSensor(); // Medium: indoor card
-
-        Handler handler = new Handler();
-        Runnable weatherUpdater = new Runnable() {
-            @Override public void run() {
-                WeatherManager.fetchAndSave(MainActivity.this);
-                handler.postDelayed(this, 8 * 60 * 60 * 1000);
-            }
-        };
-        handler.post(weatherUpdater);
-
-        new Handler().postDelayed(this::setupFirebaseSync, 3000);
+        setupUnitToggle();
+        setupMenu();
+        requestBluetoothAndConnect();
     }
 
-    private void initializeUI() {
-        rootLayout    = findViewById(R.id.activity_main_root);
-        weatherAnim   = findViewById(R.id.weather_anim);
-        tempValue     = findViewById(R.id.temp_value);
-        unitLabel     = findViewById(R.id.unit_label);
-        humidityValue = findViewById(R.id.humidity_value);
-        menuName      = findViewById(R.id.menu_name);
-        dialTicks     = findViewById(R.id.dial_ticks);
-
-        tvAirQualityBadge = findViewById(R.id.tvAirQualityBadge);
-        tvIndoorTemp      = findViewById(R.id.tvIndoorTemp);
-        tvIndoorHum       = findViewById(R.id.tvIndoorHum);
-        tvOutdoorTemp     = findViewById(R.id.tvOutdoorTemp);
-        tvOutdoorHum      = findViewById(R.id.tvOutdoorHum);
-
-        menuSettings.put("Dashboard",   26);
-        menuSettings.put("Performance", 22);
-        menuSettings.put("History",     24);
-
-        if (rootLayout != null) {
-            ViewCompat.setOnApplyWindowInsetsListener(rootLayout, (v, insets) -> {
-                Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-                v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
-                return insets;
-            });
-        }
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        FanTimerManager.cancel();
+        BluetoothFanController.disconnect();
     }
 
-    private void setupListeners() {
-        SwitchCompat offOnBtn = findViewById(R.id.offonbtn);
+    // ── Bind views ────────────────────────────────────────────────────────────
 
-        if (findViewById(R.id.menu_container) != null)
-            findViewById(R.id.menu_container).setOnClickListener(this::showMenu);
-
-        if (unitLabel != null)
-            unitLabel.setOnClickListener(v -> toggleUnits());
-
-        if (dialTicks != null) {
-            dialTicks.setOnValueChangeListener(value -> {
-                temperature = value;
-                if (tempValue != null) tempValue.setText(String.valueOf(temperature));
-                updateWeatherVibe();
-                mDatabase.child("system").child("target_temp").setValue(temperature);
-            });
-        }
-
-        if (findViewById(R.id.mode_cooling) != null)
-            findViewById(R.id.mode_cooling).setOnClickListener(v -> updateMode("Cooling"));
-        if (findViewById(R.id.mode_turbo) != null)
-            findViewById(R.id.mode_turbo).setOnClickListener(v -> updateMode("Turbo"));
-        
-
-        if (offOnBtn != null) {
-            offOnBtn.setOnCheckedChangeListener((btn, isChecked) -> {
-                String status = isChecked ? "ON" : "OFF";
-                mDatabase.child("system").child("fan_status").setValue(status);
-                // Manual toggle also tracked
-                handleFanStatusChange(status);
-            });
-        }
-
-       }
-
-    // ── Advanced: listen to fan_status node for usage tracking ───────────────
-    private void listenToFanStatus() {
-        mDatabase.child("system").child("fan_status")
-                .addValueEventListener(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(DataSnapshot snap) {
-                        String status = snap.getValue(String.class);
-                        if (status != null) handleFanStatusChange(status);
-                    }
-                    @Override public void onCancelled(DatabaseError e) {}
+    private void bindViews() {
+        ViewCompat.setOnApplyWindowInsetsListener(
+                findViewById(R.id.activity_main_root), (v, insets) -> {
+                    Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+                    v.setPadding(sys.left, sys.top, sys.right, sys.bottom);
+                    return insets;
                 });
-    }
 
-    private void handleFanStatusChange(String status) {
-        boolean newOn = "ON".equals(status);
-        if (newOn && !fanIsOn) {
-            FanUsageTracker.onFanStarted();
-        } else if (!newOn && fanIsOn) {
-            FanUsageTracker.onFanStopped();
-        }
-        if (FanTimerManager.isRunning()) cancelTimer();
-        fanIsOn = newOn;
-
-        // Sync the switch UI to reflect Firebase state
-        SwitchCompat sw = findViewById(R.id.offonbtn);
-        if (sw != null && sw.isChecked() != newOn) {
-            sw.setOnCheckedChangeListener(null); // avoid feedback loop
-            sw.setChecked(newOn);
-            sw.setOnCheckedChangeListener((btn, isChecked) -> {
-                String s = isChecked ? "ON" : "OFF";
-                mDatabase.child("system").child("fan_status").setValue(s);
-                handleFanStatusChange(s);
-            });
-        }
-    }
-
-    // ── Outdoor weather sync ──────────────────────────────────────────────────
-    private void setupFirebaseSync() {
-        String today = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
-        Calendar cal = Calendar.getInstance();
-        int hour = cal.get(Calendar.HOUR_OF_DAY);
-        String timeLabel = (hour >= 5 && hour <= 12) ? "Morning"
-                : (hour >= 13 && hour <= 17) ? "Afternoon" : "Evening";
-
-        mDatabase.child("weather/" + today + "/" + timeLabel)
-                .addValueEventListener(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(DataSnapshot snapshot) {
-                        Double temp = snapshot.child("temp_celsius").getValue(Double.class);
-                        Integer hum = snapshot.child("humidity").getValue(Integer.class);
-
-                        if (temp != null) {
-                            outdoorTempC = temp;
-                            temperature  = isFahrenheit ? (int)(temp * 9 / 5 + 32) : temp.intValue();
-                            if (tempValue != null) tempValue.setText(String.valueOf(temperature));
-                        }
-                        if (hum != null) {
-                            outdoorHum = hum;
-                            humidity   = hum;
-                            if (humidityValue != null) humidityValue.setText(humidity + "%");
-                        }
-
-                        updateWeatherVibe();
-                        refreshAirQualityBadge();
-                        refreshTempCards();
-
-                        // Medium: notification check
-                        NotificationHelper.checkAndNotify(MainActivity.this, outdoorTempC, outdoorHum);
-                        // Advanced: auto fan logic
-                        AutoFanManager.evaluate(MainActivity.this, outdoorTempC, outdoorHum);
-                    }
-                    @Override public void onCancelled(DatabaseError e) {}
-                });
-    }
-
-    // ── Indoor sensor ─────────────────────────────────────────────────────────
-    private void listenToIndoorSensor() {
-        mDatabase.child("indoor").addValueEventListener(new ValueEventListener() {
-            @Override
-            public void onDataChange(DataSnapshot snapshot) {
-                Double temp = snapshot.child("temp_celsius").getValue(Double.class);
-                Integer hum = snapshot.child("humidity").getValue(Integer.class);
-                if (temp != null) indoorTempC = temp;
-                if (hum  != null) indoorHum   = hum;
-
-                refreshTempCards();
-                refreshAirQualityBadge();
-
-                NotificationHelper.checkAndNotify(MainActivity.this, indoorTempC, indoorHum);
-                AutoFanManager.evaluate(MainActivity.this, indoorTempC, indoorHum);
-            }
-            @Override public void onCancelled(DatabaseError e) {}
-        });
-    }
-
-    // ── Air quality badge ─────────────────────────────────────────────────────
-    private void refreshAirQualityBadge() {
-        double avgTemp = (indoorTempC + outdoorTempC) / 2.0;
-        int    avgHum  = (indoorHum + outdoorHum) / 2;
-        AirQualityHelper.applyBadge(tvAirQualityBadge, avgTemp, avgHum);
-    }
-
-    // ── Indoor / Outdoor cards ────────────────────────────────────────────────
-    private void refreshTempCards() {
-        if (tvIndoorTemp != null) {
-            int d = isFahrenheit ? (int)(indoorTempC * 9 / 5 + 32) : (int) indoorTempC;
-            tvIndoorTemp.setText(d + (isFahrenheit ? "°F" : "°C"));
-        }
-        if (tvIndoorHum  != null) tvIndoorHum.setText(indoorHum + "%");
-        if (tvOutdoorTemp != null) {
-            int d = isFahrenheit ? (int)(outdoorTempC * 9 / 5 + 32) : (int) outdoorTempC;
-            tvOutdoorTemp.setText(d + (isFahrenheit ? "°F" : "°C"));
-        }
-        if (tvOutdoorHum != null) tvOutdoorHum.setText(outdoorHum + "%");
-    }
-
-    // ── Menu ──────────────────────────────────────────────────────────────────
-    private void showMenu(View v) {
-        PopupMenu menu = new PopupMenu(this, v);
-        menu.getMenu().add("Dashboard");
-        menu.getMenu().add("Performance");
-        menu.getMenu().add("History");
-        menu.getMenu().add("Settings");
-        menu.getMenu().add("Stats");          // Advanced: new screen
-
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getTitle().toString()) {
-                case "History":
-                    startActivity(new Intent(this, HistoryActivity.class)); return true;
-                case "Performance":
-                    startActivity(new Intent(this, PerformanceActivity.class)); return true;
-                case "Settings":
-                    startActivity(new Intent(this, SettingsActivity.class)); return true;
-                case "Stats":
-                    startActivity(new Intent(this, StatsActivity.class)); return true;  // Advanced
-                default:
-                    currentView = item.getTitle().toString();
-                    if (menuName != null) menuName.setText(currentView);
-                    Integer saved = menuSettings.get(currentView);
-                    if (saved != null) {
-                        temperature = saved;
-                        if (tempValue != null) tempValue.setText(String.valueOf(temperature));
-                        if (dialTicks  != null) dialTicks.setValue(temperature);
-                    }
-                    updateWeatherVibe();
-                    return true;
-            }
-        });
-        menu.show();
-    }
-
-    private void setupTimer() {
-        tvTimerDisplay   = findViewById(R.id.tvTimerDisplay);
-        tvTimerMinutes   = findViewById(R.id.tvTimerMinutes);
-        tvTimerStartLabel = findViewById(R.id.tvTimerStartLabel);
+        tvBtStatus         = findViewById(R.id.tvBtStatus);
+        tempValue          = findViewById(R.id.temp_value);
+        unitLabel          = findViewById(R.id.unit_label);
+        humidityValue      = findViewById(R.id.humidity_value);
+        tvGas1             = findViewById(R.id.tvGas1);
+        tvGas2             = findViewById(R.id.tvGas2);
+        tvAirQualityBadge  = findViewById(R.id.tvAirQualityBadge);
+        tvTimerDisplay     = findViewById(R.id.tvTimerDisplay);
+        tvTimerMinutes     = findViewById(R.id.tvTimerMinutes);
+        tvTimerStartLabel  = findViewById(R.id.tvTimerStartLabel);
+        tvFanStatusLabel   = findViewById(R.id.tvFanStatusLabel);
+        tvOutdoorTimerEcho = findViewById(R.id.tvOutdoorTimerEcho);
+        dialTicks          = findViewById(R.id.dial_ticks);
+        weatherAnim        = findViewById(R.id.weather_anim);
+        fanSwitch          = findViewById(R.id.offonbtn);
 
         if (tvTimerMinutes != null) tvTimerMinutes.setText(timerMinutes + " min");
+    }
 
-        // Minus button
-        if (findViewById(R.id.btnTimerMinus) != null) {
-            findViewById(R.id.btnTimerMinus).setOnClickListener(v -> {
-                if (FanTimerManager.isRunning()) return; // can't adjust while running
-                if (timerMinutes > 5) timerMinutes -= 5;
-                if (tvTimerMinutes != null) tvTimerMinutes.setText(String.valueOf(timerMinutes));
-            });
+    // ── Bluetooth ─────────────────────────────────────────────────────────────
+
+    @SuppressLint("InlinedApi")
+    private void requestBluetoothAndConnect() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) {
+                btPermissionLauncher.launch(new String[]{
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN});
+                return;
+            }
         }
+        connectBluetooth();
+    }
 
-        // Plus button
-        if (findViewById(R.id.btnTimerPlus) != null) {
-            findViewById(R.id.btnTimerPlus).setOnClickListener(v -> {
+    private void connectBluetooth() {
+        setBtStatus("Connecting…", 0xFFFFCC00);
+
+        BluetoothFanController.connect(
+                this,
+                ARDUINO_BT_NAME,
+                // onConnected — Consumer<String> receives device name
+                name -> runOnUiThread(() -> {
+                    setBtStatus("● " + name, 0xFF00FF88);
+                    Toast.makeText(this, "Connected to " + name,
+                            Toast.LENGTH_SHORT).show();
+                }),
+                // onDisconnected — Runnable
+                () -> runOnUiThread(() -> setBtStatus("● Disconnected", 0xFFAAAAAA)),
+                // onError — Consumer<String> receives error message
+                msg -> runOnUiThread(() -> {
+                    setBtStatus("● Error", 0xFFFF4444);
+                    Toast.makeText(this, "Bluetooth: " + msg,
+                            Toast.LENGTH_LONG).show();
+                })
+        );
+
+        BluetoothFanController.setDataCallback(
+                // onRawLine — Consumer<String>
+                line -> { /* debug: Log.d("BT", line); */ },
+
+                // onSensorData — SensorListener (temp, humidity, gas1, gas2)
+                (tempC, humidity, gas1, gas2) -> runOnUiThread(() -> {
+                    if (tempC >= 0) {
+                        lastTempC = tempC;
+                        int display = isFahrenheit
+                                ? (int)(tempC * 9 / 5 + 32) : (int) tempC;
+                        if (tempValue != null)
+                            tempValue.setText(String.valueOf(display));
+                        if (dialTicks != null) dialTicks.setValue(display);
+                        updateWeatherVibe(tempC);
+                    }
+                    if (humidity >= 0) {
+                        lastHumidity = (int) humidity;
+                        if (humidityValue != null)
+                            humidityValue.setText((int) humidity + "%");
+                    }
+                    if (gas1 >= 0 && tvGas1 != null)
+                        tvGas1.setText("Gas 1: " + (int) gas1);
+                    if (gas2 >= 0 && tvGas2 != null)
+                        tvGas2.setText("Gas 2: " + (int) gas2);
+
+                    AirQualityHelper.applyBadge(tvAirQualityBadge, lastTempC, lastHumidity);
+                    NotificationHelper.checkAndNotify(this, (double) lastTempC, lastHumidity);
+                }),
+
+                // onFanStatus — Consumer<Boolean>
+                isOn -> runOnUiThread(() -> {
+                    fanIsOn = isOn;
+                    if (fanSwitch != null && fanSwitch.isChecked() != isOn) {
+                        fanSwitch.setOnCheckedChangeListener(null);
+                        fanSwitch.setChecked(isOn);
+                        fanSwitch.setOnCheckedChangeListener(
+                                (btn, checked) -> setFan(checked));
+                    }
+                    if (!isOn && FanTimerManager.isRunning()) cancelTimer();
+                })
+        );
+    }
+
+    // ── Fan control ───────────────────────────────────────────────────────────
+
+    private void setupFanSwitch() {
+        if (fanSwitch != null)
+            fanSwitch.setOnCheckedChangeListener((btn, checked) -> setFan(checked));
+    }
+
+    private void setFan(boolean on) {
+        if (!BluetoothFanController.isConnected()) {
+            Toast.makeText(this, "Not connected to Arduino", Toast.LENGTH_SHORT).show();
+            if (fanSwitch != null) {
+                fanSwitch.setOnCheckedChangeListener(null);
+                fanSwitch.setChecked(fanIsOn);
+                fanSwitch.setOnCheckedChangeListener((btn, checked) -> setFan(checked));
+            }
+            return;
+        }
+        if (on) BluetoothFanController.sendFanOn();
+        else    BluetoothFanController.sendFanOff();
+
+        fanIsOn = on;
+        if (tvFanStatusLabel != null) {
+            tvFanStatusLabel.setText(on ? "ON" : "OFF");
+            tvFanStatusLabel.setTextColor(on ? 0xFF00FF88 : 0xFFFF5555);
+        }
+        if (!on && FanTimerManager.isRunning()) cancelTimer();
+    }
+
+    // ── Timer ─────────────────────────────────────────────────────────────────
+
+    private void setupTimer() {
+        if (tvTimerMinutes != null) tvTimerMinutes.setText(timerMinutes + " min");
+
+        View btnMinus = findViewById(R.id.btnTimerMinus);
+        View btnPlus  = findViewById(R.id.btnTimerPlus);
+        View btnStart = findViewById(R.id.btnTimerStart);
+
+        if (btnMinus != null)
+            btnMinus.setOnClickListener(v -> {
+                if (FanTimerManager.isRunning()) return;
+                if (timerMinutes > 5) timerMinutes -= 5;
+                if (tvTimerMinutes != null) tvTimerMinutes.setText(timerMinutes + " min");
+            });
+
+        if (btnPlus != null)
+            btnPlus.setOnClickListener(v -> {
                 if (FanTimerManager.isRunning()) return;
                 if (timerMinutes < 180) timerMinutes += 5;
-                if (tvTimerMinutes != null) tvTimerMinutes.setText(String.valueOf(timerMinutes));
+                if (tvTimerMinutes != null) tvTimerMinutes.setText(timerMinutes + " min");
             });
-        }
 
-        // Start / Cancel button
-        if (findViewById(R.id.btnTimerStart) != null) {
-            findViewById(R.id.btnTimerStart).setOnClickListener(v -> {
-                if (FanTimerManager.isRunning()) {
-                    cancelTimer();
-                } else {
-                    startTimer();
-                }
+        if (btnStart != null)
+            btnStart.setOnClickListener(v -> {
+                if (FanTimerManager.isRunning()) cancelTimer();
+                else startTimer();
             });
-        }
     }
 
     private void startTimer() {
-        // Make sure fan is ON before starting timer
-        SwitchCompat sw = findViewById(R.id.offonbtn);
-        if (sw != null && !sw.isChecked()) {
-            sw.setChecked(true); // this triggers handleFanStatusChange via listener
+        if (!BluetoothFanController.isConnected()) {
+            Toast.makeText(this, "Connect to Arduino first", Toast.LENGTH_SHORT).show();
+            return;
         }
-
+        setFan(true);
+        BluetoothFanController.sendTimer(timerMinutes);
         if (tvTimerStartLabel != null) tvTimerStartLabel.setText("Cancel");
 
-        FanTimerManager.start(this, timerMinutes, new FanTimerManager.TimerCallback() {
-            @Override
-            public void onTick(int secondsRemaining) {
-                runOnUiThread(() -> {
-                    if (tvTimerDisplay != null)
-                        tvTimerDisplay.setText(FanTimerManager.formatTime(secondsRemaining));
-                });
-            }
-
-            @Override
-            public void onFinished() {
-                runOnUiThread(() -> {
-                    if (tvTimerDisplay   != null) tvTimerDisplay.setText("--:--");
+        FanTimerManager.start(
+                this,
+                timerMinutes,
+                // onTick — Consumer<Integer> receives secondsRemaining
+                secs -> runOnUiThread(() -> {
+                    String t = FanTimerManager.formatTime(secs);
+                    if (tvTimerDisplay    != null) tvTimerDisplay.setText(t);
+                    if (tvOutdoorTimerEcho != null) tvOutdoorTimerEcho.setText(t);
+                }),
+                // onFinished — Runnable
+                () -> runOnUiThread(() -> {
+                    if (tvTimerDisplay    != null) tvTimerDisplay.setText("--:--");
+                    if (tvOutdoorTimerEcho != null) tvOutdoorTimerEcho.setText("--:--");
                     if (tvTimerStartLabel != null) tvTimerStartLabel.setText("Start");
-
-                    // Sync switch OFF
-                    SwitchCompat sw = findViewById(R.id.offonbtn);
-                    if (sw != null) {
-                        sw.setOnCheckedChangeListener(null);
-                        sw.setChecked(false);
-                        sw.setOnCheckedChangeListener((btn, isChecked) -> {
-                            String s = isChecked ? "ON" : "OFF";
-                            mDatabase.child("system").child("fan_status").setValue(s);
-                            handleFanStatusChange(s);
-                        });
-                    }
-                });
-            }
-        });
+                    setFan(false);
+                })
+        );
     }
 
     private void cancelTimer() {
         FanTimerManager.cancel();
-        if (tvTimerDisplay   != null) tvTimerDisplay.setText("--:--");
+        BluetoothFanController.sendTimerCancel();
+        if (tvTimerDisplay    != null) tvTimerDisplay.setText("--:--");
+        if (tvOutdoorTimerEcho != null) tvOutdoorTimerEcho.setText("--:--");
         if (tvTimerStartLabel != null) tvTimerStartLabel.setText("Start");
     }
 
+    // ── Menu ──────────────────────────────────────────────────────────────────
+
+    private void setupMenu() {
+        View menuContainer = findViewById(R.id.menu_container);
+        if (menuContainer != null)
+            menuContainer.setOnClickListener(this::showMenu);
+    }
+
+    private void showMenu(View v) {
+        PopupMenu menu = new PopupMenu(this, v);
+        menu.getMenu().add("Bluetooth");
+        menu.getMenu().add("Settings");
+        menu.setOnMenuItemClickListener(item -> {
+            String title = item.getTitle().toString();
+            if (title.equals("Bluetooth")) {
+                startActivity(new Intent(this, ConnectionActivity.class));
+                return true;
+            } else if (title.equals("Settings")) {
+                startActivity(new Intent(this, SettingsActivity.class));
+                return true;
+            }
+            return false;
+        });
+        menu.show();
+    }
+
+    // ── Unit toggle ───────────────────────────────────────────────────────────
+
+    private void setupUnitToggle() {
+        if (unitLabel != null)
+            unitLabel.setOnClickListener(v -> {
+                isFahrenheit = !isFahrenheit;
+                unitLabel.setText(isFahrenheit ? "°F" : "°C");
+                int display = isFahrenheit
+                        ? (int)(lastTempC * 9 / 5 + 32) : (int) lastTempC;
+                if (tempValue != null) tempValue.setText(String.valueOf(display));
+                if (dialTicks != null) {
+                    dialTicks.setRange(isFahrenheit ? 50 : 10, isFahrenheit ? 110 : 45);
+                    dialTicks.setValue(display);
+                }
+            });
+    }
+
+    // ── Weather animation ─────────────────────────────────────────────────────
+
+    private void updateWeatherVibe(float tempC) {
+        if (weatherAnim == null) return;
+        if      (tempC < 18) weatherAnim.setWeatherType("snow");
+        else if (tempC < 26) weatherAnim.setWeatherType("leaves");
+        else if (tempC < 32) weatherAnim.setWeatherType("rain");
+        else                 weatherAnim.setWeatherType("sun");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
-    private void toggleUnits() {
-        isFahrenheit = !isFahrenheit;
-        if (isFahrenheit) {
-            temperature = (int)(temperature * 9 / 5.0 + 32);
-            if (unitLabel != null) unitLabel.setText("°F");
-            if (dialTicks != null) dialTicks.setRange(50, 100);
-        } else {
-            temperature = (int)((temperature - 32) * 5 / 9.0);
-            if (unitLabel != null) unitLabel.setText("°C");
-            if (dialTicks != null) dialTicks.setRange(10, 40);
-        }
-        if (tempValue != null) tempValue.setText(String.valueOf(temperature));
-        if (dialTicks  != null) dialTicks.setValue(temperature);
-        refreshTempCards();
-        WeatherManager.fetchAndSave(this);
-    }
 
-    private void updateWeatherVibe() {
-        if (rootLayout == null || weatherAnim == null) return;
-        int f = isFahrenheit ? temperature : (int)(temperature * 9 / 5.0 + 32);
-        if      (f < 60) { rootLayout.setBackgroundResource(R.drawable.winter_bg); weatherAnim.setWeatherType("snow"); }
-        else if (f < 75) { rootLayout.setBackgroundResource(R.drawable.autumn_bg); weatherAnim.setWeatherType("leaves"); }
-        else if (f < 85) { rootLayout.setBackgroundResource(R.drawable.weather_bg); weatherAnim.setWeatherType("rain"); }
-        else             { rootLayout.setBackgroundResource(R.drawable.summer_bg);  weatherAnim.setWeatherType("sun"); }
-    }
-
-    private void updateMode(String mode) {
-        currentMode = mode;
-        if ("Turbo".equals(mode)) {
-            temperature = isFahrenheit ? 90 : 32;
-            if (tempValue != null) tempValue.setText(String.valueOf(temperature));
-            if (dialTicks  != null) dialTicks.setValue(temperature);
+    private void setBtStatus(String text, int color) {
+        if (tvBtStatus != null) {
+            tvBtStatus.setText(text);
+            tvBtStatus.setTextColor(color);
         }
-        updateWeatherVibe();
-        mDatabase.child("system").child("operating_mode").setValue(mode);
     }
 }
